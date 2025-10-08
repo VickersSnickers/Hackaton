@@ -1,40 +1,73 @@
 import pandas as pd
 import pymorphy3
 import re
+import json
 
-URL = "https://oliis.jinr.ru/index.php/patentovanie-2/8-russian/25-dejstvuyushchie-patenty-oiyai"
+INPUT_FILE = "full_dataset_clean.jsonl"    # входной JSONL (по одной записи в строке)
+OUTPUT_FILE = "patents.json"     # обработанный JSON
 morph = pymorphy3.MorphAnalyzer()
 
-def clean_and_lemmatize(text):
-    text = re.sub(r"<.*?>", " ", str(text))
-    text = re.sub(r"[^а-яА-Яa-zA-Z0-9\s]", " ", text)
-    text = text.lower()
-    words = text.split()
-    lemmas = [morph.parse(w)[0].normal_form for w in words]
-    return " ".join(lemmas)
-
+# ===============================
+# Ключевые слова для классификации
+# ===============================
 TOPIC_KEYWORDS = {
     "Приборостроение и электроника": [
-        "устройство", "датчик", "контроль", "электрон",  "детект"
-        "модуль", "генератор", "сигнал", "передача", "лазер", "изготов", "атор"
+        # Русские
+        "устройство", "датчик", "контроль", "электрон", "детект",
+        "модуль", "генератор", "сигнал", "передача", "лазер", "изготов",
+        "атор", "микросхем", "прибор", "плата", "контроллер", "усилител",
+        "оптическ", "интерферометр", "волн", "схема", "интегральн",
+        # Английские
+        "device", "sensor", "control", "electronic", "detector", "module",
+        "generator", "signal", "transmission", "laser", "manufacture",
+        "chip", "board", "controller", "amplifier", "optical", "interferometer",
+        "wave", "circuit", "integrated"
     ],
     "Физика и Ядерные технологии": [
+        # Русские
         "ускорител", "реактор", "нейтрон", "ядро", "излучение",
         "детектор", "облучение", "радиация", "спектрометр", "пуч",
-        "сверхпровод", "вакуум", "частиц", "магнит", "способ", "сцинтиллятор"
+        "сверхпровод", "вакуум", "частиц", "магнит", "способ", "сцинтиллятор",
+        "коллайдер", "фотон", "изотоп", "ядерн", "плазм", "энергетик",
+        # Английские
+        "accelerator", "reactor", "neutron", "nuclear", "radiation",
+        "detector", "irradiation", "spectrometer", "beam", "superconduct",
+        "vacuum", "particle", "magnet", "method", "scintillator",
+        "collider", "photon", "isotope", "plasma", "fusion", "energy"
     ],
     "Материаловедение": [
+        # Русские
         "наноматериал", "сплав", "структура", "термообработка",
-        "композит", "порошок", "материал", "поверхность"
+        "композит", "порошок", "материал", "поверхность", "микроструктур",
+        "кристалл", "тонкоплёночн", "термическ", "корроз", "механическ",
+        # Английские
+        "nanomaterial", "alloy", "structure", "heat", "composite", "powder",
+        "material", "surface", "microstructure", "crystal", "thinfilm",
+        "thermal", "corrosion", "mechanical"
     ],
     "Биомедицина": [
-        "биологическ", "медицин", "терапия", "диагностика", 
+        # Русские
+        "биологическ", "медицин", "терапия", "диагностика",
         "охлаждение", "образец", "пациент", "био", "ткань", "жив",
-        "генетич", "заболев", "болез"
+        "генетич", "заболев", "болез", "вакцин", "биоинженер",
+        "клетк", "молекул", "иммун", "анализ", "диагностическ",
+        # Английские
+        "biological", "medical", "therapy", "diagnostic", "cooling",
+        "sample", "patient", "bio", "tissue", "living", "genetic",
+        "disease", "illness", "vaccine", "bioengineering", "cell",
+        "molecule", "immune", "analysis", "diagnostics"
     ],
     "Информационные технологии": [
-        "обработка", "алгоритм", "система", "программа", 
-        "вычислени", "моделирован", "управление", "данные"
+        # Русские
+        "обработка", "алгоритм", "система", "программа",
+        "вычислени", "моделирован", "управление", "данные",
+        "информационн", "баз", "компьютер", "сеть", "облачн",
+        "модульн", "нейросет", "распознаван", "анализ", "код",
+        # Английские
+        "processing", "algorithm", "system", "software", "computation",
+        "modeling", "control", "data", "information", "database",
+        "computer", "network", "cloud", "modular", "neural", "recognition",
+        "analysis", "code", "machine", "learning", "artificial", "intelligence"
     ]
 }
 
@@ -46,32 +79,69 @@ TOPIC_PRIORITY = [
     "Физика и Ядерные технологии",
 ]
 
-def classify_topic_with_priority(text):
-    matched_topics = []
+# ===============================
+# Лингвистическая обработка
+# ===============================
+def clean_and_lemmatize(text: str) -> str:
+    text = re.sub(r"<.*?>", " ", str(text))
+    text = re.sub(r"[^а-яА-Яa-zA-Z0-9\s]", " ", text)
+    text = text.lower()
+    words = text.split()
+    lemmas = [morph.parse(w)[0].normal_form for w in words]
+    return " ".join(lemmas)
+
+# ===============================
+# Классификация по темам
+# ===============================
+def classify_topic(text: str) -> str:
+    matched = []
     for topic, keywords in TOPIC_KEYWORDS.items():
         for kw in keywords:
             if kw in text:
-                matched_topics.append(topic)
+                matched.append(topic)
                 break
-    if not matched_topics:
+    if not matched:
         return "Не классифицировано"
-    for priority_topic in TOPIC_PRIORITY:
-        if priority_topic in matched_topics:
-            return priority_topic
+    for t in TOPIC_PRIORITY:
+        if t in matched:
+            return t
 
-
+# ===============================
+# Основной блок
+# ===============================
 if __name__ == "__main__":
-    tables = pd.read_html(URL)
-    df = tables[1]
-    df.columns = ["№ п/п", "Номер патента", "Приоритет", "Название", "Публикации", "Авторы"]
-    df = df.drop(columns=["№ п/п"])
-    df = df[df["Номер патента"] != "Номер патента"]
-    df["Авторы"] = df["Авторы"].apply(lambda x: [a.strip() for a in str(x).split(",")])
-    df = df.drop(index=0)
+    # Чтение JSONL
+    records = []
+    with open(INPUT_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
 
-    df["Чистое_название"] = df["Название"].apply(clean_and_lemmatize)
-    df["Область"] = df["Чистое_название"].apply(classify_topic_with_priority)
+    df = pd.DataFrame(records)
 
-    df.drop(columns=["Чистое_название"], inplace=True)
-    df.to_json("patents.json", orient="records", force_ascii=False, indent=2)
-    print("Количество записей:", len(df))
+    # Лемматизация названия и классификация
+    df["Леммы_названия"] = df["name"].apply(clean_and_lemmatize)
+    df["Леммы_текста"] = df["text_of_document"].apply(clean_and_lemmatize)
+    df["Леммы_всё"] = df["Леммы_названия"] + " " + df["Леммы_текста"]
+    df["Область"] = df["Леммы_всё"].apply(classify_topic)
+
+    # Разбивка авторов
+    df["Авторы"] = df["authors"].apply(
+        lambda x: [a.strip() for a in str(x).split(",") if a.strip()] if x else ["Не указано"]
+    )
+
+    # Извлечение года
+    df["Год"] = df["date"].str.extract(r"(\d{4})")
+    df = df[
+        df["Год"].notna() &
+        (df["Год"] >= "2000") &
+        (df["Область"] != "Не классифицировано")
+    ]
+
+    # Сохраняем в удобном формате
+    df.drop(columns=["Леммы_названия", "Леммы_текста", "Леммы_всё"], inplace=True)
+    df.to_json(OUTPUT_FILE, orient="records", force_ascii=False, indent=2)
+
+    print(f"Обработано записей: {len(df)}")
+    print(f"Сохранено в: {OUTPUT_FILE}")
